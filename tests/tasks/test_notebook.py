@@ -1748,3 +1748,79 @@ Path(product).write_text(a)
     output = product_file.read_text()
     print(output)
     assert "Testing" in output
+
+
+@pytest.mark.parametrize("params_name",
+                         ["executor_params", "papermill_params"])
+def test_papermill_custom_engine(tmp_directory, params_name):
+    from papermill.engines import NBClientEngine, papermill_engines
+
+    calls = []
+
+    class CustomEngine(NBClientEngine):
+
+        @classmethod
+        def execute_managed_notebook(cls, nb_man, kernel_name, **kwargs):
+            calls.append(kernel_name)
+            return super().execute_managed_notebook(nb_man, kernel_name,
+                                                    **kwargs)
+
+    papermill_engines.register("ploomber-test-custom", CustomEngine)
+    try:
+        dag = DAG()
+        task = NotebookRunner(
+            "# + tags=['parameters']\nproduct = None\n# +\nresult = 1 + 1\n",
+            File("out.ipynb"),
+            dag=dag,
+            name="custom-engine",
+            ext_in="py",
+            kernelspec_name="python3",
+            executor="papermill",
+            **{params_name: {
+                "engine_name": "ploomber-test-custom"
+            }},
+        )
+        dag.build()
+        assert calls == ["python3"]
+        assert nbformat.read("out.ipynb",
+                             as_version=4).cells[-1].execution_count
+        assert task.executor_params["engine_name"] == "ploomber-test-custom"
+    finally:
+        papermill_engines._engines.pop("ploomber-test-custom", None)
+
+
+def test_papermill_builtin_engine(tmp_directory):
+    task = NotebookRunner(
+        "# + tags=['parameters']\nproduct = None\n# +\n1 + 1\n",
+        File("out.ipynb"),
+        dag=DAG(),
+        name="builtin-engine",
+        ext_in="py",
+        kernelspec_name="python3",
+        executor="papermill",
+        executor_params={"engine_name": "nbclient"},
+    )
+    assert task.executor_params["engine_name"] == "nbclient"
+
+
+@pytest.mark.parametrize("debug_mode", ["now", "later"])
+def test_custom_engine_still_conflicts_with_debug_mode(debug_mode):
+    with pytest.raises(ValueError, match="debug_mode"):
+        NotebookRunner(
+            "1 + 1",
+            File("out.ipynb"),
+            dag=DAG(),
+            executor_params={"engine_name": "custom"},
+            debug_mode=debug_mode,
+        )
+
+
+def test_ploomber_engine_still_rejects_conflicting_engine():
+    with pytest.raises(KeyError, match="conflicting options"):
+        NotebookRunner(
+            "1 + 1",
+            File("out.ipynb"),
+            dag=DAG(),
+            executor="ploomber-engine",
+            executor_params={"engine_name": "custom"},
+        )
