@@ -654,7 +654,7 @@ class NotebookRunner(NotebookMixin, Task):
                 'when "debug_mode" is enabled'
             )
 
-        if "engine_name" in self.executor_params:
+        if "engine_name" in self.executor_params and self.executor != "papermill":
             if self.executor != self.executor_params["engine_name"]:
                 raise KeyError(
                     "Found conflicting options: executor is set "
